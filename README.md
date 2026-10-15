@@ -1,5 +1,11 @@
 # webnovel-house-style · 网文写作家规 Skill
 
+[![GitHub Stars](https://img.shields.io/github/stars/dongdong2023/webnovel-house-style?style=social)](https://github.com/dongdong2023/webnovel-house-style/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![中文](https://img.shields.io/badge/lang-中文-red)](README.md)
+
+**English**: A house-style Agent Skill for Chinese web-novel writing & editing — battle-tested over 40+ serialized chapters. Auto-loads your standards (chapter length 2000–2400 chars with a checker script, de-AI-flavor blacklist, "win-by-a-hair" plotting, full-cast IQ online, chapter-end hooks, zero-contamination scan) whenever you ask your coding agent to write, revise or review chapters. Works with Claude Code / ZCode / Codex / OpenCode.
+
 把"怎么写、怎么查"变成 AI 的肌肉记忆——一套经过 40+ 章连载实战检验的中文网文写作/修订/评审标准，打包成 coding agent 的 skill（Claude Code / ZCode / Codex / OpenCode 等通用）。
 
 写新章、改稿、终检时家规自动加载，不用每次把方法论重新贴一遍。
@@ -19,6 +25,14 @@
 - **每周调研机制**：市场趋势 / AI 写作技巧 / 去AI味与人味写作三条线定期调研，重要结论回写家规（见 `references/调研工作流.md`，可配 agent 定时任务自动执行）
 
 ## 安装
+
+一键安装（需 Node）：
+
+```bash
+npx skills add dongdong2023/webnovel-house-style
+```
+
+或手动克隆：
 
 ```bash
 git clone https://github.com/dongdong2023/webnovel-house-style.git
