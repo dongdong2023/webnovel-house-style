@@ -72,6 +72,14 @@ python scripts/check_chapter.py . --recursive --min 2000 --max 2400
 
 任一文件越界退出码为 1，方便接进发布前检查。
 
+## 定位：与"从零生成"型 skill 的区别
+
+社区已有优秀的**从零生成**方案（如 [chinese-novelist-skill](https://github.com/PenglongHuang/chinese-novelist-skill)、[oh-story-claudecode](https://github.com/zenstory-ai/oh-story-claudecode)）：问答定题材 → 生成大纲 → 自动逐章写出一本新书。
+
+本仓库解决的是另一个问题：**你已经有了自己的标准，或已经在写一本书**——需要 AI 在每次写章、改稿、终检时严格执行你的口径：章长区间、去AI味黑名单、主角行为铁律、数字一致性、正文零污染扫描。
+
+两者不冲突：用生成型 skill 起书，用本 skill 做"改稿 + 终检 + 连载守规"。只想用本 skill 也完全可以，把你的标准填进去即可（见下方"换成你自己的家规"）。
+
 ## 换成你自己的家规
 
 本仓库是一个起点，不是标准答案：
