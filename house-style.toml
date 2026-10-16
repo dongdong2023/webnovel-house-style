@@ -1,0 +1,7 @@
+[chapter]
+min_chars = 2000
+max_chars = 2400
+
+[english]
+# 仅放“正文里允许出现”的通用术语；书中特有代号请在项目自己的配置里追加。
+allowlist = ["APP", "GPS", "USB", "DNA", "NPC", "VIP", "CPU", "GPU", "PDF", "URL", "WiFi", "wifi"]
