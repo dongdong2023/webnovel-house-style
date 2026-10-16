@@ -1,0 +1,32 @@
+[research]
+year = 2026
+top_n = 50
+request_timeout = 15
+# 番茄 CDN 会拒绝非浏览器 UA，这里用真实浏览器串
+user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
+[hotness]
+rank_weight = 0.35
+read_weight = 0.45
+freshness_weight = 0.20
+
+[sources.fanqie]
+enabled = true
+# 板块清单见 research/sources/fanqie_boards.py
+# 男频19题材 + 女频18题材，各配 新书榜(_1)/在读榜(_2) 两种
+genders = ["男频", "女频"]
+rank_types = ["在读榜", "新书榜"]
+# 相邻请求间隔，对站点保持礼貌
+request_delay_seconds = 0.8
+top_per_board = 10
+
+[corpus]
+# 只有明确授权/开放许可/用户自己提供的语料才允许进入分析池
+allowed_rights = [
+    "open_license",
+    "authorized",
+    "user_provided",
+]
+
+[style]
+min_chinese_chars = 1000
