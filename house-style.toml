@@ -1,7 +1,35 @@
+[workspace]
+# 题材预设：hanli_survival（韩立式求生）或 fanqie_fast_pace（番茄快节奏爽文）
+active_preset = "hanli_survival"
+# 时代背景：ancient（古代/仙侠/玄幻）或 modern（都市/现代）
+active_era = "ancient"
+
 [chapter]
 min_chars = 2000
 max_chars = 2400
 
-[english]
+# 预设章长覆盖：--preset 或 active_preset 命中时，优先用预设区间
+[presets.hanli_survival.chapter]
+min_chars = 1900
+max_chars = 2500
+
+[presets.fanqie_fast_pace.chapter]
+min_chars = 1950
+max_chars = 2800
+
+# 英文白名单按时代背景分离
+# ancient（古代/仙侠/玄幻）：原则上不出现英文，列表为空
+[english.ancient]
+allowlist = []
+
+# modern（都市/现代）：放行常见英文缩写
+[english.modern]
 # 仅放“正文里允许出现”的通用术语；书中特有代号请在项目自己的配置里追加。
-allowlist = ["APP", "GPS", "USB", "DNA", "NPC", "VIP", "CPU", "GPU", "PDF", "URL", "WiFi", "wifi"]
+allowlist = ["APP", "GPS", "USB", "DNA", "NPC", "VIP", "CPU", "GPU", "PDF", "URL", "WiFi", "wifi", "AI", "CEO", "CFO", "HR", "IP", "KTV", "SUV", "ICU", "CT", "B超"]
+
+# 内容合规门禁
+[compliance]
+# 合规词表路径（相对仓库根目录）；文件不存在时仅用内置基础规则
+wordlist = "config/compliance_words.txt"
+# 命中合规词时的级别：固定为 blocking，不可降级
+level = "blocking"
