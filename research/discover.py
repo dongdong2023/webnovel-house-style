@@ -41,8 +41,11 @@ def calculate_hotness(
 
     不先归一化的话，log1p(在读数) 量级在 10~18，
     会把 0~1 的排名分量彻底淹没，配置里的权重形同虚设。
-    某条记录缺字段时跳过该分量并把剩余权重重新归一。
+    分母固定为三项权重之和，缺失的分量按 0 计——旧逻辑对缺失项
+    重新归一化分母，无排名无读数的残缺记录会被 freshness=1.0
+    常量拉到满分 1.0，反超有真实数据的书。
     """
+    total_weight = rank_weight + read_weight + freshness_weight
 
     # 排名取负号：第 1 名 -> 归一化后 1.0
     rank_scores = minmax(
@@ -87,10 +90,9 @@ def calculate_hotness(
             )
 
         # 单次快照里没有历史数据，新鲜度先给常量基础分；
-        # data/snapshots/ 攒下多期数据后替换成真实增长率
+        # data/snapshots/ 攒下多期数据后替换成真实增长率。
+        # 常量对所有记录一视同仁，配合固定分母不会再拔高缺失项
         parts.append((1.0, freshness_weight))
-
-        total_weight = sum(w for _, w in parts)
 
         record.hotness_score = (
             sum(s * w for s, w in parts) / total_weight

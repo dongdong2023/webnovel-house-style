@@ -214,6 +214,9 @@ class HotnessTest(unittest.TestCase):
         # 排名和读数同序时，双料第一必须排最前
         self.assertEqual(titles[0], "a")
 
+        # 严格顺序：缺字段的残缺记录不得靠新鲜度常量反超有真实数据的书
+        self.assertEqual(titles, ["a", "b", "c", "d"])
+
         # 缺字段的记录不崩溃、不丢失
         self.assertIn("d", titles)
 

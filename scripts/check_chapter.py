@@ -33,6 +33,9 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
+# Skill 自身根目录：跨目录调用（在小说项目目录里跑本脚本）时的兜底寻址基准
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+
 DEFAULT_MIN, DEFAULT_MAX = 2000, 2400
 PRESET_CHAPTER_RANGES = {
     "hanli_survival": (1900, 2500),
@@ -59,7 +62,8 @@ CONTAMINATION = [
         "blocking",
     ),
     (
-        re.compile(r"ChatGPT|Claude|Gemini|DeepSeek|GLM|Qwen|文心|通义|Kimi"),
+        # 只拦完整产品名，避免"文心雕龙""通义达理"等古汉语词误报
+        re.compile(r"ChatGPT|Claude|Gemini|DeepSeek|GLM|Qwen|文心一言|通义千问|Kimi"),
         "模型名残留",
         "blocking",
     ),
@@ -74,11 +78,15 @@ CONTAMINATION = [
         "blocking",
     ),
 ]
-ENGLISH_RE = re.compile(r"[a-zA-Z]{3,}")
+# 英文扫描按时代分档：modern 拦 2 个及以上连续字母；ancient 1 个字母即拦
+ENGLISH_RE_MODERN = re.compile(r"[a-zA-Z]{2,}")
+ENGLISH_RE_ANCIENT = re.compile(r"[a-zA-Z]+")
 
-# 对话：匹配中文引号 “...” 与直引号 "..."
-DIALOGUE_RE = re.compile(r"[“\"]([^”\"\n]{1,400})[”\"]")
-SENTENCE_SPLIT_RE = re.compile(r"[。！？…]+")
+# 对话：支持 “...” "..." 「...」 『...』 四种引号，不设长度上限（超长独白不能靠超限逃逸）
+DIALOGUE_RE = re.compile(
+    r"“([^”\n]+)”|\"([^\"\n]+)\"|「([^」\n]+)」|『([^』\n]+)』"
+)
+SENTENCE_SPLIT_RE = re.compile(r"[。！？…!?]+")
 
 # 数字提取：阿拉伯数字 + 中文数字 + 常见量词
 NUMBER_RE = re.compile(
@@ -132,18 +140,26 @@ def load_config(path: Path | None) -> dict:
     return cfg
 
 
-def load_compliance_words(repo_root: Path, cfg: dict) -> list[str]:
-    """读取合规词表；文件不存在返回空列表。"""
-    rel = cfg.get("compliance", {}).get("wordlist", "config/compliance_words.txt")
-    p = repo_root / rel if not Path(rel).is_absolute() else Path(rel)
-    if not p.is_file():
-        return []
-    words = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            words.append(line)
-    return words
+def load_compliance_words(config_dir: Path, cfg: dict) -> list[str]:
+    """读取合规词表。
+
+    寻址顺序：配置文件所在目录 > Skill 自带目录（SKILL_ROOT）。
+    两处都找不到时打印 [WARN] 并返回空列表——合规扫描失效必须可见，
+    不许静默返回 0 词让红线门禁被无声绕过。
+    """
+    rel = Path(cfg.get("compliance", {}).get(
+        "wordlist", "config/compliance_words.txt"))
+    candidates = [rel] if rel.is_absolute() else [config_dir / rel, SKILL_ROOT / rel]
+    for p in candidates:
+        if p.is_file():
+            words = []
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    words.append(line)
+            return words
+    print(f"[WARN] 未找到合规词表 {rel}，合规扫描未生效", file=sys.stderr)
+    return []
 
 
 def scan_compliance(text: str, words: list[str]) -> list[dict[str, str]]:
@@ -160,16 +176,22 @@ def scan_compliance(text: str, words: list[str]) -> list[dict[str, str]]:
                     "severity": "blocking",
                     "snippet": f"…{line[start:start + 40]}…（命中：{w}）",
                 })
-                break  # 每行只报一次
+                # 不 break：网文一段常是一行数百字，同一行内的每个红线词都要报出
     return hits
 
 
 def scan_contamination(
     text: str,
     english_allowlist: set[str] | None = None,
+    era: str | None = None,
 ) -> list[dict[str, str]]:
-    """返回污染报告；每项包含行号、级别、类型和摘录。"""
-    allowlist = english_allowlist or set()
+    """返回污染报告；每项包含行号、级别、类型和摘录。
+
+    英文检查按 era 分档（ancient 1 字母即拦，modern 2 字母起拦），
+    白名单对比大小写不敏感。
+    """
+    allowlist_upper = {str(w).upper() for w in (english_allowlist or set())}
+    english_re = ENGLISH_RE_ANCIENT if era == "ancient" else ENGLISH_RE_MODERN
     hits: list[dict[str, str]] = []
     lines = text.splitlines()
 
@@ -185,8 +207,8 @@ def scan_contamination(
 
     english = sorted({
         m.group(0)
-        for m in ENGLISH_RE.finditer(text)
-        if m.group(0) not in allowlist
+        for m in english_re.finditer(text)
+        if m.group(0).upper() not in allowlist_upper
     })
     if english:
         hits.append({
@@ -204,7 +226,7 @@ def analyze_dialogue(text: str, max_sentences: int) -> list[dict[str, str]]:
     lines = text.splitlines()
     for i, line in enumerate(lines, 1):
         for m in DIALOGUE_RE.finditer(line):
-            speech = m.group(1).strip()
+            speech = next(g for g in m.groups() if g is not None).strip()
             sentences = [s for s in SENTENCE_SPLIT_RE.split(speech) if s.strip()]
             if len(sentences) > max_sentences:
                 advisories.append({
@@ -216,21 +238,37 @@ def analyze_dialogue(text: str, max_sentences: int) -> list[dict[str, str]]:
     return advisories
 
 
+# 无量词时只保留阿拉伯数字与 2 位以上的中文大额数字；
+# 单个中文数字字多半是虚词（一下/一定/十分/半晌/几乎/多少），属噪音
+_CN_NUMBER_CHARS = set("零一二三四五六七八九十百千万亿两")
+
+
 def extract_numbers(text: str, limit: int = 60) -> list[dict[str, str]]:
-    """数字提取：列出文中数字+量词，供人工核对咬合。返回去重后的列表。"""
+    """数字提取：列出文中数字+量词，供人工核对咬合。
+
+    同一数值多次出现不去重丢弃，而是合并行号展示（如 line="5,120"），
+    保证前后账目的每一次出现都可核对。
+    """
     seen: dict[str, dict[str, str]] = {}
     lines = text.splitlines()
     for i, line in enumerate(lines, 1):
         for m in NUMBER_RE.finditer(line):
             num, unit = m.group(1), m.group(2) or ""
-            # 过滤纯序号噪音：单个小数字无量词且常见于标点环境的跳过
+            if not unit:
+                # 过滤纯序号/虚词噪音：单个中文数字字无量词时跳过
+                if not num.isdigit() and not (
+                    len(num) >= 2 and all(c in _CN_NUMBER_CHARS for c in num)
+                ):
+                    continue
             key = f"{num}{unit}"
-            if key not in seen:
-                seen[key] = {
-                    "line": str(i),
-                    "value": key,
-                    "context": line.strip()[max(0, m.start() - 10):m.end() + 10][:60],
-                }
+            if key in seen:
+                seen[key]["line"] += f",{i}"
+                continue
+            seen[key] = {
+                "line": str(i),
+                "value": key,
+                "context": line.strip()[max(0, m.start() - 10):m.end() + 10][:60],
+            }
             if len(seen) >= limit:
                 return list(seen.values())
     return list(seen.values())
@@ -240,14 +278,33 @@ def count_nonspace(text: str) -> int:
     return sum(1 for ch in text if not ch.isspace())
 
 
+# 目录递归扫描时跳过的 Skill 元数据目录/文件：它们不是小说章节，
+# 扫进去会把合规词表、预设、说明文档当正文误报（见 README 的 . --recursive 示例）
+SKIP_DIR_NAMES = {"config", "presets", "references", "docs", "state"}
+SKIP_FILE_NAMES = {"README.md", "SKILL.md"}
+
+
+def _is_skill_metadata(path: Path) -> bool:
+    if path.name in SKIP_FILE_NAMES:
+        return True
+    for part in path.parts[:-1]:
+        if part in SKIP_DIR_NAMES:
+            return True
+        if part.startswith(".") and part not in (".", ".."):
+            return True  # 隐藏目录 .git/.claude/.agents 等
+    return False
+
+
 def collect(paths: list[str], recursive: bool) -> list[Path]:
     files: list[Path] = []
     for p in paths:
         path = Path(p)
         if path.is_dir():
             it = path.rglob if recursive else path.glob
-            files.extend(f for f in it("*.txt") if f.is_file())
-            files.extend(f for f in it("*.md") if f.is_file())
+            found = [f for f in it("*.txt") if f.is_file()]
+            found += [f for f in it("*.md") if f.is_file()]
+            # 目录扫来的文件跳过 Skill 元数据；命令行显式给的文件不经过这里
+            files.extend(f for f in found if not _is_skill_metadata(f))
         elif path.is_file():
             files.append(path)
         else:
@@ -261,23 +318,33 @@ def resolve_chapter_range(
     lo: int | None,
     hi: int | None,
 ) -> tuple[int, int]:
-    """章长区间优先级：命令行 --min/--max > --preset > TOML active_preset > [chapter] 默认。"""
+    """章长区间：先定基准，再用命令行 --min/--max 单边覆盖。
+
+    基准优先级：TOML [presets.<active>] > 内置预设表 > TOML [chapter]。
+    命令行只传一边时，另一边取基准值（旧逻辑会错误回退到全局默认）。
+    基准与覆盖合并后校验 min <= max，非法直接抛 ValueError。
+    """
     active = preset or cfg.get("workspace", {}).get("active_preset")
-    if lo is not None and hi is not None:
-        return lo, hi
+    chapter_cfg = cfg.get("chapter", {})
+    base_lo = int(chapter_cfg.get("min_chars", DEFAULT_MIN))
+    base_hi = int(chapter_cfg.get("max_chars", DEFAULT_MAX))
+
     presets_cfg = cfg.get("presets", {})
     if active and active in presets_cfg:
         pc = presets_cfg[active].get("chapter", {})
-        p_lo = pc.get("min_chars")
-        p_hi = pc.get("max_chars")
-        if p_lo is not None and p_hi is not None:
-            return (lo if lo is not None else int(p_lo),
-                    hi if hi is not None else int(p_hi))
-    if active in PRESET_CHAPTER_RANGES and lo is None and hi is None:
-        return PRESET_CHAPTER_RANGES[active]
-    chapter_cfg = cfg.get("chapter", {})
-    return (lo if lo is not None else int(chapter_cfg.get("min_chars", DEFAULT_MIN)),
-            hi if hi is not None else int(chapter_cfg.get("max_chars", DEFAULT_MAX)))
+        if pc.get("min_chars") is not None:
+            base_lo = int(pc["min_chars"])
+        if pc.get("max_chars") is not None:
+            base_hi = int(pc["max_chars"])
+    elif active in PRESET_CHAPTER_RANGES:
+        base_lo, base_hi = PRESET_CHAPTER_RANGES[active]
+
+    min_chars = lo if lo is not None else base_lo
+    max_chars = hi if hi is not None else base_hi
+    if min_chars > max_chars:
+        raise ValueError(
+            f"章长区间非法：min_chars={min_chars} > max_chars={max_chars}")
+    return min_chars, max_chars
 
 
 def resolve_allowlist(cfg: dict, era: str | None) -> set[str]:
@@ -295,6 +362,7 @@ def check_file(
     english_allowlist: set[str],
     compliance_words: list[str] | None = None,
     dialogue_max_sentences: int = DEFAULT_DIALOGUE_MAX_SENTENCES,
+    era: str | None = None,
 ) -> dict:
     compliance_words = compliance_words or []
     text = read_text(path)
@@ -326,7 +394,7 @@ def check_file(
         })
 
     if purity:
-        for hit in scan_contamination(text, english_allowlist):
+        for hit in scan_contamination(text, english_allowlist, era=era):
             if hit["severity"] == "blocking":
                 blocking.append(hit)
             else:
@@ -406,16 +474,22 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     args = ap.parse_args()
 
+    # 配置查找优先级：--config > 当前目录 house-style.toml > Skill 自带 house-style.toml
     config_path = args.config
     if config_path is None:
         candidate = Path("house-style.toml")
-        config_path = candidate if candidate.exists() else None
+        skill_cfg = SKILL_ROOT / "house-style.toml"
+        if candidate.exists():
+            config_path = candidate
+        elif skill_cfg.is_file():
+            config_path = skill_cfg
     repo_root = config_path.parent if config_path else Path(".")
 
     try:
         cfg = load_config(config_path)
         min_chars, max_chars = resolve_chapter_range(cfg, args.preset, args.lo, args.hi)
         allowlist = resolve_allowlist(cfg, args.era)
+        active_era = args.era or cfg.get("workspace", {}).get("active_era", "modern")
         compliance_words = load_compliance_words(repo_root, cfg)
         active_preset = args.preset or cfg.get("workspace", {}).get("active_preset")
         dialogue_max = PRESET_DIALOGUE_MAX_SENTENCES.get(
@@ -438,6 +512,7 @@ def main() -> int:
             english_allowlist=allowlist,
             compliance_words=compliance_words,
             dialogue_max_sentences=dialogue_max,
+            era=active_era,
         )
         for f in files
     ]

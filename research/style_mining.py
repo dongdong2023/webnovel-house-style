@@ -5,11 +5,20 @@ import re
 import statistics
 from pathlib import Path
 
+from research.corpus import (
+    default_allowed_rights,
+    load_manifest,
+    sha256_file,
+    validate_manifest,
+)
+from research.models import CorpusItem
+from research.settings import DATA_DIR
+
 
 CHINESE_RE = re.compile(r"[\u3400-\u9fff]")
 
 SENTENCE_RE = re.compile(
-    r"[^。！？!?；;\n]+[。！？!?；;]?"
+    r"[^。！？!?；;…\n]+[。！？!?；;…]?"
 )
 
 DIALOGUE_RE = re.compile(
@@ -122,24 +131,74 @@ def analyze(text: str) -> dict:
     }
 
 
+def _resolve_corpus_path(entry_path: str, corpus_root: Path) -> Path | None:
+    """manifest 里的 path 是建单时相对当时工作目录记录的；
+    先按原样找，找不到再按文件名到语料目录里找。"""
+    raw = Path(entry_path)
+    candidates = [raw] if raw.is_absolute() else [raw, corpus_root / raw.name]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def analyze_corpus(
     corpus_root: Path,
     min_chinese_chars: int = 1000,
+    manifest_path: Path | None = None,
 ) -> dict:
+    """风格分析入口，强制走 Rights Gate（权利门禁）。
+
+    只读取同时满足三条的文件，缺一不可：
+    1. 在 corpus_manifest.json 里登记（未登记的文件一律不读）；
+    2. rights 命中允许集合（validate_manifest + CorpusItem.allowed 双重校验）；
+    3. 文件当前 sha256 与 manifest 记录一致（防登记后被替换）。
+    没有 manifest 直接报错，先运行 `python -m research.cli manifest <目录>` 建单。
+    """
+
+    if manifest_path is None:
+        manifest_path = DATA_DIR / "corpus_manifest.json"
+
+    if not manifest_path.is_file():
+        raise RuntimeError(
+            f"未找到语料 manifest：{manifest_path}。"
+            "请先运行 python -m research.cli manifest <语料目录> 建单，"
+            "确认每份语料的 rights 后再 mine。"
+        )
+
+    allowed_rights = default_allowed_rights()
+    allowed, rejected = validate_manifest(
+        load_manifest(manifest_path),
+        allowed_rights=allowed_rights,
+    )
 
     profiles = []
+    skipped: list[str] = []
 
-    for path in corpus_root.rglob("*"):
-
-        if not path.is_file():
+    for entry in allowed:
+        # manifest 是裸 dict（path/sha256/rights），这里转成 CorpusItem
+        # 走 allowed() 做第二道权利校验，避免两处口径漂移
+        item = CorpusItem(
+            novel_title=Path(entry.get("path", "")).stem,
+            platform="local",
+            path=entry.get("path", ""),
+            rights=entry.get("rights", ""),
+        )
+        if not item.allowed(allowed_rights):
+            skipped.append(f"{item.path}（rights 不被允许）")
             continue
 
-        if path.suffix.lower() not in {".txt", ".md"}:
+        path = _resolve_corpus_path(item.path, corpus_root)
+        if path is None:
+            skipped.append(f"{item.path}（文件不存在）")
             continue
 
-        text = read_text_best(path)
+        recorded_sha = entry.get("sha256")
+        if not recorded_sha or sha256_file(path) != recorded_sha:
+            skipped.append(f"{item.path}（sha256 与 manifest 不一致）")
+            continue
 
-        profile = analyze(text)
+        profile = analyze(read_text_best(path))
 
         if profile["chinese_chars"] < min_chinese_chars:
             continue
@@ -151,6 +210,7 @@ def analyze_corpus(
     if not profiles:
         raise RuntimeError(
             "没有找到足够的合法语料。"
+            f"（manifest 拒绝 {len(rejected)} 份，门禁跳过 {len(skipped)} 份）"
         )
 
     return aggregate(profiles)

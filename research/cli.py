@@ -140,12 +140,17 @@ def main() -> None:
 
         root = Path(args.directory)
 
-        profile = analyze_corpus(
-            root,
-            min_chinese_chars=config["style"][
-                "min_chinese_chars"
-            ],
-        )
+        try:
+            profile = analyze_corpus(
+                root,
+                min_chinese_chars=config["style"][
+                    "min_chinese_chars"
+                ],
+            )
+        except RuntimeError as exc:
+            # Rights Gate 未通过（无 manifest / 权利不符 / sha 不一致）时
+            # 给出可读原因，而不是抛栈
+            raise SystemExit(f"[FAIL] {exc}") from exc
 
         output = (
             DATA_DIR / "style_profiles" / "current.json"

@@ -29,7 +29,8 @@ allowlist = ["APP", "GPS", "USB", "DNA", "NPC", "VIP", "CPU", "GPU", "PDF", "URL
 
 # 内容合规门禁
 [compliance]
-# 合规词表路径（相对仓库根目录）；文件不存在时仅用内置基础规则
+# 合规词表路径（相对配置文件所在目录）；该处找不到时回退 Skill 自带词表，
+# 两处都没有则打印 [WARN] 合规扫描未生效（不静默失效）
 wordlist = "config/compliance_words.txt"
 # 命中合规词时的级别：固定为 blocking，不可降级
 level = "blocking"

@@ -13,7 +13,36 @@ SENTENCE_RE = re.compile(r"[^。！？!?；;…\n]+[。！？!?；;…]?")
 CHINESE_RE = re.compile(r"[\u3400-\u9fff]")
 DIALOGUE_RE = re.compile(r'[“"「『].*?[”"」』]')
 PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
-WORDLIKE_RE = re.compile(r"[\u3400-\u9fff]{2,6}")
+CLAUSE_RE = re.compile(r"[\u3400-\u9fff]{2,}")
+
+
+def extract_ngrams(text: str, min_n: int = 2, max_n: int = 4) -> Counter:
+    """滑动窗口 N-gram 统计跨子句复现的真实短语。
+
+    旧做法用 {2,6} 贪婪非重叠正则 findall，会把长句从左到右机械切成
+    6 字碎片，产出的"高频短语"全是随机偏移的截断垃圾。
+    """
+    counts: Counter[str] = Counter()
+    for clause in CLAUSE_RE.findall(text):
+        L = len(clause)
+        for n in range(min_n, min(max_n, L) + 1):
+            for i in range(L - n + 1):
+                counts[clause[i:i + n]] += 1
+    return counts
+
+
+def top_phrases(counts: Counter, top_n: int, min_count: int = 3) -> list[dict]:
+    """取高频短语，并滤除与更长短语同频的子串冗余（如"黑衣人"被"黑衣人没有"同频包含时只留长者）。"""
+    candidates = [(p, c) for p, c in counts.items() if c >= min_count]
+    # 长者优先、同长按频次降序，保证被保留的一定是更长的短语
+    candidates.sort(key=lambda pc: (len(pc[0]), pc[1]), reverse=True)
+    kept: list[tuple[str, int]] = []
+    for phrase, count in candidates:
+        if any(phrase in kp and count <= kc for kp, kc in kept):
+            continue
+        kept.append((phrase, count))
+    kept.sort(key=lambda pc: pc[1], reverse=True)
+    return [{"phrase": p, "count": c} for p, c in kept[:top_n]]
 
 def read_text(path: Path) -> str | None:
     raw = path.read_bytes()
@@ -42,7 +71,7 @@ def analyze(text: str) -> dict:
     chinese_chars = len(CHINESE_RE.findall(text))
     dialogue_chars = sum(len(CHINESE_RE.findall(m.group(0))) for m in DIALOGUE_RE.finditer(text))
     punctuation = Counter(ch for ch in text if ch in "，。！？；：、")
-    wordlike = Counter(WORDLIKE_RE.findall(text))
+    phrases = extract_ngrams(text)
     return {
         "version": 1,
         "files": 1,
@@ -67,11 +96,7 @@ def analyze(text: str) -> dict:
             k: round(v / chinese_chars * 1000, 2) if chinese_chars else 0
             for k, v in punctuation.items()
         },
-        "common_2_to_6_char_phrases": [
-            {"phrase": phrase, "count": count}
-            for phrase, count in wordlike.most_common(30)
-            if count >= 3
-        ],
+        "common_2_to_6_char_phrases": top_phrases(phrases, 30),
     }
 
 def merge(analyses: list[dict]) -> dict:
@@ -89,6 +114,10 @@ def merge(analyses: list[dict]) -> dict:
             punc[k] += v * a["chinese_chars"] / 1000
         for item in a["common_2_to_6_char_phrases"]:
             phrases[item["phrase"]] += item["count"]
+    sentence_mean = round(statistics.mean(sentence_means), 2) if sentence_means else 0
+    # 字段名是 median_of_files 就必须是各文件中位数的中位数；
+    # 旧实现误用 mean（对中位数再取均值），口径与命名不符
+    paragraph_median = round(statistics.median(paragraph_medians), 2) if paragraph_medians else 0
     return {
         "version": 1,
         "files": len(analyses),
@@ -97,10 +126,13 @@ def merge(analyses: list[dict]) -> dict:
         "paragraphs": sum(a["paragraphs"] for a in analyses),
         "sentences": sum(a["sentences"] for a in analyses),
         "dialogue_ratio": round(total_dialogue / total_chinese, 4) if total_chinese else 0,
-        "sentence_length_mean_of_files": round(statistics.mean(sentence_means), 2) if sentence_means else 0,
-        "paragraph_length_median_of_files": round(statistics.mean(paragraph_medians), 2) if paragraph_medians else 0,
+        "sentence_length_mean_of_files": sentence_mean,
+        "paragraph_length_median_of_files": paragraph_median,
+        # 与 research/style_mining.py 聚合输出同名的别名，保证两套画像可互换消费
+        "sentence_length_mean": sentence_mean,
+        "paragraph_length_median": paragraph_median,
         "punctuation_per_1000_chinese": {k: round(v / total_chinese * 1000, 2) if total_chinese else 0 for k, v in punc.items()},
-        "common_2_to_6_char_phrases": [{"phrase": phrase, "count": count} for phrase, count in phrases.most_common(50) if count >= 3],
+        "common_2_to_6_char_phrases": top_phrases(phrases, 50),
     }
 
 def collect(root: Path) -> list[Path]:

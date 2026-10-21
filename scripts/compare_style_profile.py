@@ -12,7 +12,7 @@ import re
 import statistics
 from pathlib import Path
 
-SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?")
+SENTENCE_RE = re.compile(r"[^。！？!?；;…\n]+[。！？!?；;…]?")
 CHINESE_RE = re.compile(r"[\u3400-\u9fff]")
 DIALOGUE_RE = re.compile(r'[“"「『].*?[”"」』]')
 PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
@@ -64,10 +64,15 @@ def main() -> int:
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
     actual = metrics(text)
 
+    # 兼容两套画像的字段命名：scripts 版 *_of_files 与 research 版短名
     targets = {
         "dialogue_ratio": profile.get("dialogue_ratio", 0),
-        "sentence_length_mean": profile.get("sentence_length_mean_of_files", 0),
-        "paragraph_length_median": profile.get("paragraph_length_median_of_files", 0),
+        "sentence_length_mean": profile.get(
+            "sentence_length_mean_of_files",
+            profile.get("sentence_length_mean", 0)),
+        "paragraph_length_median": profile.get(
+            "paragraph_length_median_of_files",
+            profile.get("paragraph_length_median", 0)),
     }
 
     print("Style Profile advisory")

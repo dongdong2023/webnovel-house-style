@@ -17,6 +17,11 @@ PUA_RE = re.compile(r"[\ue000-\uf8ff]")
 
 _STATE_ANCHOR_RE = re.compile(r"window\.__INITIAL_STATE__\s*=\s*")
 
+# 状态对象里混有 JS 字面量 undefined，不是合法 JSON；
+# 只在 script 体内、且只替换值位置（: [ , 之后）的 undefined，
+# 避免全文 replace 篡改简介等字符串字面量里的同名文本
+_UNDEFINED_RE = re.compile(r"(?<=[:\[,])\s*undefined\b")
+
 # "第85章 85-只是在气沈静芙" -> 85；"番外八 ..." -> 无匹配
 CHAPTER_NUM_RE = re.compile(r"第(\d{1,6})章")
 
@@ -42,11 +47,13 @@ def extract_initial_state(html: str) -> dict[str, Any]:
         )
 
     tail = html[match.end():]
-    # 状态对象里混有 JS 字面量 undefined，不是合法 JSON，先替换成 null
-    tail = tail.replace(":undefined", ":null")
+    # 先截到本 script 结束，再在 script 体内把值位置的 undefined 换成 null
+    end = tail.find("</script>")
+    script_body = tail[:end] if end != -1 else tail
+    script_body = _UNDEFINED_RE.sub("null", script_body)
 
     try:
-        state, _ = json.JSONDecoder().raw_decode(tail)
+        state, _ = json.JSONDecoder().raw_decode(script_body)
     except json.JSONDecodeError as exc:
         raise ValueError(
             f"__INITIAL_STATE__ JSON 解析失败: {exc}"
@@ -233,11 +240,12 @@ class FanqieAdapter:
         unique: dict[tuple[str, str, str], NovelRecord] = {}
 
         for record in records:
+            # 按唯一主键 book_id 去重：同名书（或 PUA 码点碰撞）不能按 title 误删
             unique.setdefault(
                 (
                     record.platform,
                     record.board,
-                    record.title,
+                    record.book_id,
                 ),
                 record,
             )

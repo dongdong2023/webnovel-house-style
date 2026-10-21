@@ -79,6 +79,21 @@ def save_manifest(
     return output
 
 
+def load_manifest(
+    path: Path | None = None,
+) -> list[dict]:
+    """读取 save_manifest 落盘的 corpus_manifest.json，返回 items 列表。"""
+
+    if path is None:
+        path = DATA_DIR / "corpus_manifest.json"
+
+    payload = json.loads(
+        path.read_text(encoding="utf-8")
+    )
+
+    return payload.get("items", [])
+
+
 def validate_manifest(
     manifest: list[dict],
     allowed_rights: set[str] | None = None,
