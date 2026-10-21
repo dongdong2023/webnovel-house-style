@@ -281,7 +281,7 @@ def count_nonspace(text: str) -> int:
 # 目录递归扫描时跳过的 Skill 元数据目录/文件：它们不是小说章节，
 # 扫进去会把合规词表、预设、说明文档当正文误报（见 README 的 . --recursive 示例）
 SKIP_DIR_NAMES = {"config", "presets", "references", "docs", "state"}
-SKIP_FILE_NAMES = {"README.md", "SKILL.md"}
+SKIP_FILE_NAMES = {"README.md", "SKILL.md", "requirements.txt"}
 
 
 def _is_skill_metadata(path: Path) -> bool:
